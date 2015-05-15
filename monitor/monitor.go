@@ -107,6 +107,10 @@ func (m *Monitor) Measure(name string, val float64) (err error) {
 		return ErrNoSuchMetric
 	}
 
+	if val <= 0 {
+		return nil
+	}
+
 	now := time.Now().Format(time.RFC3339)
 	p.Point.DoubleValue = val
 	p.Point.Start = now
