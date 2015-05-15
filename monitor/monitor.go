@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,6 +11,10 @@ import (
 
 const (
 	Prefix = "custom.cloudmonitoring.googleapis.com/"
+)
+
+var (
+	ErrNoSuchMetric = errors.New("no such metric")
 )
 
 var EmptyPoint = cloudmonitoring.Point{
@@ -29,17 +34,13 @@ type Monitor struct {
 	MonitorOpts
 	tsSvc   *cloudmonitoring.TimeseriesService
 	mdSvc   *cloudmonitoring.MetricDescriptorsService
+	metrics map[string]*cloudmonitoring.TimeseriesPoint
 	request *cloudmonitoring.WriteTimeseriesRequest
 }
 
 type MetricOpts struct {
 	Name   string
 	Labels map[string]string
-}
-
-type Metric struct {
-	MetricOpts
-	*cloudmonitoring.TimeseriesPoint
 }
 
 func NewMonitor(opts MonitorOpts) (m *Monitor, err error) {
@@ -59,41 +60,21 @@ func NewMonitor(opts MonitorOpts) (m *Monitor, err error) {
 
 	tsSvc := cloudmonitoring.NewTimeseriesService(svc)
 	mdSvc := cloudmonitoring.NewMetricDescriptorsService(svc)
+	metrics := make(map[string]*cloudmonitoring.TimeseriesPoint)
+
 	request := &cloudmonitoring.WriteTimeseriesRequest{
 		Timeseries: make([]*cloudmonitoring.TimeseriesPoint, 0),
 	}
 
-	m = &Monitor{opts, tsSvc, mdSvc, request}
+	m = &Monitor{opts, tsSvc, mdSvc, metrics, request}
 	go m.start()
 
 	return m, nil
 }
 
-func (m *Monitor) start() {
-	time.Sleep(m.Interval / 2)
-
-	for _ = range time.Tick(m.Interval) {
-		err := m.flush()
-		if err != nil {
-			fmt.Println(err)
-		}
-	}
-}
-
-func (m *Monitor) flush() (err error) {
-	call := m.tsSvc.Write(m.ProjectID, m.request)
-
-	_, err = call.Do()
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (m *Monitor) NewMetric(opts MetricOpts) (e *Metric, err error) {
+func (m *Monitor) NewMetric(opts MetricOpts) (err error) {
 	if err := m.create(opts); err != nil {
-		return nil, err
+		return err
 	}
 
 	lbls := map[string]string{}
@@ -115,9 +96,53 @@ func (m *Monitor) NewMetric(opts MetricOpts) (e *Metric, err error) {
 		},
 	}
 
+	m.metrics[opts.Name] = p
+
+	return nil
+}
+
+func (m *Monitor) Measure(name string, val float64) (err error) {
+	p, ok := m.metrics[name]
+	if !ok {
+		return ErrNoSuchMetric
+	}
+
+	now := time.Now().Format(time.RFC3339)
+	p.Point.DoubleValue = val
+	p.Point.Start = now
+	p.Point.End = now
+
 	m.request.Timeseries = append(m.request.Timeseries, p)
 
-	return &Metric{opts, p}, nil
+	return nil
+}
+
+func (m *Monitor) start() {
+	for _ = range time.Tick(m.Interval) {
+		err := m.flush()
+		if err != nil {
+			fmt.Println(err)
+		}
+	}
+}
+
+func (m *Monitor) flush() (err error) {
+	if len(m.request.Timeseries) == 0 {
+		// nothing to send
+		return nil
+	}
+
+	call := m.tsSvc.Write(m.ProjectID, m.request)
+
+	_, err = call.Do()
+	if err != nil {
+		return err
+	}
+
+	// clear the series
+	m.request.Timeseries = m.request.Timeseries[:0]
+
+	return nil
 }
 
 func (m *Monitor) create(opts MetricOpts) (err error) {
@@ -148,11 +173,4 @@ func (m *Monitor) create(opts MetricOpts) (err error) {
 	}
 
 	return nil
-}
-
-func (m *Metric) Measure(value float64) {
-	now := time.Now().Format(time.RFC3339)
-	m.Point.DoubleValue = value
-	m.Point.Start = now
-	m.Point.End = now
 }
