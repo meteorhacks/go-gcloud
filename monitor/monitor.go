@@ -107,16 +107,10 @@ func (m *Monitor) Measure(name string, val float64) (err error) {
 		return ErrNoSuchMetric
 	}
 
-	if val <= 0 {
-		return nil
-	}
-
 	now := time.Now().Format(time.RFC3339)
 	p.Point.DoubleValue = val
 	p.Point.Start = now
 	p.Point.End = now
-
-	m.request.Timeseries = append(m.request.Timeseries, p)
 
 	return nil
 }
@@ -131,6 +125,15 @@ func (m *Monitor) start() {
 }
 
 func (m *Monitor) flush() (err error) {
+	// clear the series
+	m.request.Timeseries = m.request.Timeseries[:0]
+
+	for _, p := range m.metrics {
+		if p.Point.DoubleValue > 0 {
+			m.request.Timeseries = append(m.request.Timeseries, p)
+		}
+	}
+
 	if len(m.request.Timeseries) == 0 {
 		// nothing to send
 		return nil
@@ -143,8 +146,9 @@ func (m *Monitor) flush() (err error) {
 		return err
 	}
 
-	// clear the series
-	m.request.Timeseries = m.request.Timeseries[:0]
+	for _, p := range m.metrics {
+		*p.Point = EmptyPoint
+	}
 
 	return nil
 }
