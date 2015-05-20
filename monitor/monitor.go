@@ -14,7 +14,8 @@ const (
 )
 
 var (
-	ErrNoSuchMetric = errors.New("no such metric")
+	ErrNoSuchMetric    = errors.New("no such metric")
+	ErrMonitorNotReady = errors.New("Monitor is not ready")
 )
 
 var EmptyPoint = cloudmonitoring.Point{
@@ -73,6 +74,10 @@ func NewMonitor(opts MonitorOpts) (m *Monitor, err error) {
 }
 
 func (m *Monitor) NewMetric(opts MetricOpts) (err error) {
+	if m == nil {
+		return ErrMonitorNotReady
+	}
+
 	if err := m.create(opts); err != nil {
 		return err
 	}
@@ -102,6 +107,10 @@ func (m *Monitor) NewMetric(opts MetricOpts) (err error) {
 }
 
 func (m *Monitor) Measure(name string, val float64) (err error) {
+	if m == nil {
+		return ErrMonitorNotReady
+	}
+
 	p, ok := m.metrics[name]
 	if !ok {
 		return ErrNoSuchMetric
@@ -175,8 +184,7 @@ func (m *Monitor) create(opts MetricOpts) (err error) {
 		},
 	})
 
-	_, err = call.Do()
-	if err != nil {
+	if _, err = call.Do(); err != nil {
 		return err
 	}
 
